@@ -1,0 +1,257 @@
+package com.myvu.client.app;
+
+import com.myvu.client.app.feature.ClockSync;
+import com.myvu.client.app.feature.Weather;
+import com.myvu.client.core.LogBus;
+
+import org.json.JSONArray;
+import org.json.JSONException;
+import org.json.JSONObject;
+
+import java.util.ArrayList;
+import java.util.List;
+
+/**
+ * Handles messages the glasses send US, ported from the _check_* helpers in
+ * applayer.py.
+ *
+ * Several glasses-side features do not work at all unless the phone answers a
+ * request first -- most importantly the launch-app handshake, without which the
+ * navigation app ignores every frame we stream and re-asks forever.
+ *
+ * Relay bodies are protobuf with JSON embedded inside, so rather than decode the
+ * envelope precisely we scan for balanced {...} runs, exactly as the Python
+ * client does.
+ */
+public class InboundRouter {
+
+    public interface Sender {
+        /** Sends an action with explicit routing packages. */
+        void send(String actionJson, String targetPkg, String sourcePkg);
+    }
+
+    /** Fired when the glasses' AI button or wake word triggers. */
+    public interface AiTriggerListener {
+        void onAiTrigger(int code, JSONObject payload);
+    }
+
+    /** Fired when the glasses ask for a fresh weather push. */
+    public interface WeatherRequestListener {
+        void onWeatherRequested();
+    }
+
+    /**
+     * Fired after we ack a glasses-side app asking us to launch its phone-side
+     * companion service.
+     *
+     * This is the closest thing to "the user opened an app ON the glasses" that
+     * reaches us: the appId names the phone package the glasses expect to be
+     * running, e.g.
+     * {@code com.upuphone.star.launcher@com.upuphone.ar.translation.phone.TranslationService}.
+     */
+    public interface LaunchRequestListener {
+        void onLaunchRequested(String appId);
+    }
+
+    /**
+     * Fired with the package name of an app the glasses report activity for.
+     *
+     * The glasses stream usage telemetry to the phone as {@code event_tracking}
+     * / {@code sync_glass_event}, and each entry carries the package it belongs
+     * to in {@code _app_model_}. For an app the user opened ON the glasses this
+     * is the only announcement that reaches us at all -- a scene launched from
+     * the glasses' own launcher sends neither a launch request nor its own
+     * start command until it believes a phone-side app is already there.
+     */
+    public interface GlassAppEventListener {
+        void onGlassAppEvent(String packageName, String eventName);
+    }
+
+    private final Sender sender;
+    private AiTriggerListener aiListener;
+    private WeatherRequestListener weatherListener;
+    private LaunchRequestListener launchListener;
+    private GlassAppEventListener glassAppListener;
+
+    public InboundRouter(Sender sender) {
+        this.sender = sender;
+    }
+
+    public void setAiTriggerListener(AiTriggerListener listener) {
+        this.aiListener = listener;
+    }
+
+    public void setWeatherRequestListener(WeatherRequestListener listener) {
+        this.weatherListener = listener;
+    }
+
+    public void setLaunchRequestListener(LaunchRequestListener listener) {
+        this.launchListener = listener;
+    }
+
+    public void setGlassAppEventListener(GlassAppEventListener listener) {
+        this.glassAppListener = listener;
+    }
+
+    /** Inspects one inbound relay body and answers anything that needs answering. */
+    public void handle(String body) {
+        for (String candidate : findJsonObjects(body)) {
+            JSONObject obj;
+            try {
+                obj = new JSONObject(candidate);
+            } catch (JSONException e) {
+                continue; // not a complete object; skip
+            }
+            checkLaunchAppRequest(obj);
+            checkTimeSyncRequest(obj);
+            checkWeatherRequest(obj);
+            checkAiTrigger(obj);
+            checkGlassAppEvent(obj);
+        }
+    }
+
+    /**
+     * Reports the glasses' app-usage telemetry, which is how we learn that the
+     * user opened something ON the lens.
+     *
+     * One entry looks like
+     * <pre>
+     * {"_app_model_":"com.upuphone.ar.translation.glasses",
+     *  "_event_name_":"iot_translator_click", "_event_attr_value_":{"status":1}}
+     * </pre>
+     * Stop and quit events come through the same stream, so they are dropped
+     * here rather than left for each listener to recognise -- "the user opened
+     * X" and "the user left X" arriving on one callback is a trap.
+     */
+    private void checkGlassAppEvent(JSONObject msg) {
+        if (glassAppListener == null) return;
+        if (!"event_tracking".equals(msg.optString("action", ""))) return;
+        JSONObject data = msg.optJSONObject("data");
+        if (data == null || !"sync_glass_event".equals(data.optString("action", ""))) return;
+        JSONArray events = data.optJSONArray("value");
+        if (events == null) return;
+
+        for (int i = 0; i < events.length(); i++) {
+            JSONObject e = events.optJSONObject(i);
+            if (e == null) continue;
+            String pkg = e.optString("_app_model_", "");
+            if (pkg.isEmpty()) continue;
+            String name = e.optString("_event_name_", "");
+            if (isLeavingEvent(name)) continue;
+            LogBus.trace("glass app event: " + pkg + " " + name);
+            glassAppListener.onGlassAppEvent(pkg, name);
+        }
+    }
+
+    /** e.g. iot_app_stop_event, iot_voice_quit. */
+    private static boolean isLeavingEvent(String eventName) {
+        return eventName.contains("stop") || eventName.contains("quit")
+                || eventName.contains("exit") || eventName.contains("end");
+    }
+
+    /**
+     * The glasses ask for fresh weather with {"action":"syncWeather"}.
+     *
+     * The official app parses this and then throws it away -- its handler
+     * callback is never assigned anywhere in the APK -- so on a stock phone the
+     * glasses only ever get weather from the app's own 30-minute timer. We
+     * actually answer it, which is strictly better behaviour.
+     */
+    private void checkWeatherRequest(JSONObject msg) {
+        if (!Weather.isSyncRequest(msg)) return;
+        LogBus.log("<- the glasses asked for weather");
+        if (weatherListener != null) weatherListener.onWeatherRequested();
+    }
+
+    /**
+     * Answers the RunAsOne "open StarryNet app" request.
+     *
+     * Opening e.g. the nav app on the glasses makes them ask the phone to launch
+     * a companion service via {"type":11,...}. A real phone replies type:12 with
+     * success. We cannot start their service, but the glasses only need the ack
+     * -- we stream the actual data ourselves -- and WITHOUT it the glasses'
+     * app never proceeds and re-sends the request indefinitely.
+     */
+    private void checkLaunchAppRequest(JSONObject msg) {
+        if (msg.optInt("type", -1) != 11) return;
+        JSONObject data = msg.optJSONObject("data");
+        if (data == null) return;
+        String appId = data.optString("appId", "");
+        if (appId.isEmpty()) return;
+
+        try {
+            JSONObject response = new JSONObject()
+                    .put("type", 12)
+                    .put("data", new JSONObject()
+                            .put("appId", appId)
+                            .put("code", 200)
+                            .put("menuId", data.opt("menuId") == null ? "" : data.opt("menuId"))
+                            .put("requestId", data.opt("requestId") == null
+                                    ? "" : data.opt("requestId"))
+                            .put("success", true));
+            LogBus.log("glasses asked to launch " + appId + " -- acking type:12");
+            // Must go out on the interconnect inner channel, not the launcher.
+            sender.send(response.toString(),
+                    AppLayer.PKG_INTERCONNECT, AppLayer.PKG_INTERCONNECT);
+            // After the ack, not before: a listener that starts a session will
+            // send to a glasses-side app that is still waiting on this reply.
+            if (launchListener != null) launchListener.onLaunchRequested(appId);
+        } catch (JSONException e) {
+            LogBus.error("could not build the launch-app ack", e);
+        }
+    }
+
+    /**
+     * The glasses ask for wall-clock time by sending SyncOffSetTime with no
+     * syncTimeData. Messages that already carry it are time payloads (possibly
+     * our own), so answering those would loop.
+     */
+    private void checkTimeSyncRequest(JSONObject msg) {
+        if (!ClockSync.isRequest(msg)) return;
+        try {
+            LogBus.log("glasses requested a time sync -- replying");
+            sender.send(ClockSync.build(), AppLayer.PKG_LAUNCHER, AppLayer.PKG_LAUNCHER);
+        } catch (JSONException e) {
+            LogBus.error("could not build the time sync reply", e);
+        }
+    }
+
+    /**
+     * AI assistant triggers: code 3 is the hardware button, code 7 the wake
+     * word. Phase 8 drives the conversation from here; for now the trigger is
+     * surfaced to whoever is listening.
+     */
+    private void checkAiTrigger(JSONObject msg) {
+        if (!msg.has("code")) return;
+        int code = msg.optInt("code", -1);
+        if (code != 3 && code != 7) return;
+
+        JSONObject payload = msg.optJSONObject("payload");
+        LogBus.log("AI trigger: code=" + code
+                + (code == 3 ? " (button)" : " (wake word)"));
+        if (aiListener != null) aiListener.onAiTrigger(code, payload);
+    }
+
+    /**
+     * Balanced-brace scan for embedded {...} objects, handling nesting. Port of
+     * applayer._find_json_objects.
+     */
+    public static List<String> findJsonObjects(String s) {
+        List<String> out = new ArrayList<>();
+        int depth = 0;
+        int start = -1;
+        for (int i = 0; i < s.length(); i++) {
+            char c = s.charAt(i);
+            if (c == '{') {
+                if (depth == 0) start = i;
+                depth++;
+            } else if (c == '}' && depth > 0) {
+                depth--;
+                if (depth == 0 && start >= 0) {
+                    out.add(s.substring(start, i + 1));
+                }
+            }
+        }
+        return out;
+    }
+}

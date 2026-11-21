@@ -1,0 +1,77 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'com.myvu.client'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId 'com.myvu.musicglass'
+        minSdk 26
+        targetSdk 34
+        versionCode 1
+        versionName '0.1'
+    }
+
+    // Release signing lives in android/keystore.properties (untracked, like the
+    // keystore itself -- see .gitignore): storeFile / storePassword / keyAlias /
+    // keyPassword. Without the file, release builds are simply unsigned, so a
+    // fresh clone still builds.
+    def keystoreProps = new Properties()
+    def keystorePropsFile = rootProject.file('keystore.properties')
+    if (keystorePropsFile.exists()) {
+        keystorePropsFile.withInputStream { keystoreProps.load(it) }
+    }
+
+    signingConfigs {
+        release {
+            if (keystorePropsFile.exists()) {
+                storeFile rootProject.file(keystoreProps['storeFile'])
+                storePassword keystoreProps['storePassword']
+                keyAlias keystoreProps['keyAlias']
+                keyPassword keystoreProps['keyPassword']
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            // Keep off: the createBond(int)/hidden-API reflection in service/Bonding
+            // breaks silently under R8 without explicit keep rules.
+            minifyEnabled false
+            if (keystorePropsFile.exists()) {
+                signingConfig signingConfigs.release
+            }
+        }
+    }
+
+    buildFeatures {
+        viewBinding true
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}
+
+dependencies {
+    // FusedLocationProvider for turn-by-turn (replaces the Python client's
+    // pyserial NMEA reader). Kept behind nav/LocationSource so the zero-dep
+    // framework LocationManager path stays available.
+    implementation 'com.google.android.gms:play-services-location:21.3.0'
+    // Pulled in transitively by Play Services anyway; gives us AppCompatActivity.
+    implementation 'androidx.appcompat:appcompat:1.7.0'
+    implementation 'com.google.android.material:material:1.12.0'
+    // Live captioning streams audio to Deepgram over a WebSocket, which
+    // HttpURLConnection cannot do. Java-WebSocket is a pure-Java client (~150KB,
+    // no Kotlin runtime), so it costs far less here than pulling in OkHttp.
+    implementation 'org.java-websocket:Java-WebSocket:1.5.7'
+
+    testImplementation 'junit:junit:4.13.2'
+    // REQUIRED: the org.json in android.jar is a stub that throws
+    // RuntimeException("Stub!") under JVM unit tests, so every codec test that
+    // touches JSON would fail without a real implementation on the test path.
+    testImplementation 'org.json:json:20240303'
+}

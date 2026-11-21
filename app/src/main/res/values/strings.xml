@@ -1,0 +1,41 @@
+<resources>
+    <string name="app_name">Music Glass</string>
+    <string name="autolock_title">Autolock</string>
+    <string name="autolock_set">Set duration</string>
+    <string name="autolock_read">Read value</string>
+    <string name="autolock_requested_duration">Requested Autolock duration</string>
+    <string name="autolock_apply">Apply</string>
+    <string name="autolock_disconnected">Connect to read or change Autolock.</string>
+    <string name="autolock_unknown">Current duration has not been read.</string>
+    <string name="autolock_requested">Requested %1$s. Verify the result on the glasses or use Read value.</string>
+    <string name="autolock_read_requested">Autolock value requested from the glasses.</string>
+    <string name="autolock_no_report">No device value read in this session.</string>
+    <string name="autolock_reading">Waiting for the glasses to report Autolock.</string>
+    <string name="autolock_reported">Last reported by glasses: %1$d seconds.</string>
+    <string name="autolock_read_timeout">No Autolock reply received. Try Read value again.</string>
+    <!-- Keep this order aligned with the seconds in showAutolockDialog(). -->
+    <string-array name="autolock_durations">
+        <item>1 minute</item>
+        <item>2 minutes</item>
+        <item>5 minutes</item>
+        <item>15 minutes</item>
+    </string-array>
+
+    <!-- Music + lyrics feature -->
+    <string name="subtitle">在线音乐 · 歌词同步显示在眼镜镜片</string>
+    <string name="mac_hint">眼镜 MAC，例如 2C:6F:4E:00:DC:47</string>
+    <string name="connect">连接</string>
+    <string name="disconnect">断开</string>
+    <string name="status_idle">未连接</string>
+    <string name="log_label">日志</string>
+    <string name="music_feature_title">音乐与歌词</string>
+    <string name="music_feature_hint">填入在线音频 URL 和 LRC 歌词 URL，播放后歌词逐行推送到镜片</string>
+    <string name="music_url_hint">音乐 URL（mp3/m4a 直链）</string>
+    <string name="lyrics_url_hint">歌词 URL（.lrc 文本，可留空）</string>
+    <string name="load">加载</string>
+    <string name="play">播放</string>
+    <string name="pause">暂停</string>
+    <string name="stop">停止</string>
+    <string name="nothing_playing">准备播放</string>
+    <string name="ready">就绪</string>
+</resources>
