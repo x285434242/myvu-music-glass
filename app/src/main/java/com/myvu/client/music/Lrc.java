@@ -62,10 +62,14 @@ public final class Lrc {
         }
     }
 
-    private static final Pattern TIME_TAG =
-            Pattern.compile("\\[(\\d{1,3}):(\\d{2})(?:[.:](\\d{1,3}))?\\]");
-    private static final Pattern META_TAG =
-            Pattern.compile("^\\[(ar|ti|al|by|offset|length|re|ve):([^]]*)\\]$", Pattern.CASE_INSENSITIVE);
+    /** Any bracketed tag, e.g. [00:12.34], [offset:100], [ti:Song]. */
+    private static final Pattern ANY_TAG = Pattern.compile("\\[([^]]*)\\]");
+    /** Body of a metadata tag (without brackets). */
+    private static final Pattern META_BODY =
+            Pattern.compile("(ar|ti|al|by|offset|length|re|ve):([^]]*)", Pattern.CASE_INSENSITIVE);
+    /** Body of a timestamp tag (without brackets). */
+    private static final Pattern TIME_BODY =
+            Pattern.compile("(\\d{1,3}):(\\d{2})(?:[.:](\\d{1,3}))?");
 
     /**
      * Parse LRC text. Lines with no timestamp are ignored. Metadata is captured
@@ -84,40 +88,47 @@ public final class Lrc {
                 String line = raw.trim();
                 if (line.isEmpty()) continue;
 
-                Matcher meta = META_TAG.matcher(line);
-                if (meta.matches()) {
-                    String key = meta.group(1).toLowerCase();
-                    String val = meta.group(2).trim();
-                    if ("ti".equals(key)) title = val;
-                    else if ("ar".equals(key)) artist = val;
-                    else if ("offset".equals(key)) {
-                        try { offsetMs = Integer.parseInt(val) * 10; } catch (NumberFormatException ignored) {}
+                // Walk every bracketed tag in order. Metadata updates state;
+                // timestamps remember where they sit so we can slice the text
+                // that follows each one (up to the next tag).
+                Matcher any = ANY_TAG.matcher(line);
+                java.util.List<int[]> spans = new ArrayList<>(); // {start, end}
+                while (any.find()) {
+                    String body = any.group(1);
+                    Matcher meta = META_BODY.matcher(body);
+                    if (meta.matches()) {
+                        String key = meta.group(1).toLowerCase();
+                        String val = meta.group(2).trim();
+                        if ("ti".equals(key)) title = val;
+                        else if ("ar".equals(key)) artist = val;
+                        else if ("offset".equals(key)) {
+                            try { offsetMs = Integer.parseInt(val) * 10; }
+                            catch (NumberFormatException ignored) {}
+                        }
+                        continue;
                     }
-                    continue;
+                    Matcher t = TIME_BODY.matcher(body);
+                    if (t.matches()) {
+                        long min = Long.parseLong(t.group(1));
+                        long sec = Long.parseLong(t.group(2));
+                        String frac = t.group(3);
+                        long ms = 0;
+                        if (frac != null) {
+                            ms = Long.parseLong(frac);
+                            for (int i = frac.length(); i < 3; i++) ms *= 10;
+                        }
+                        long timeMs = min * 60000L + sec * 1000L + ms + offsetMs;
+                        spans.add(new int[]{(int) timeMs, any.start(), any.end()});
+                    }
                 }
 
-                Matcher tags = TIME_TAG.matcher(line);
-                List<Long> stamps = new ArrayList<>();
-                int end = 0;
-                while (tags.find()) {
-                    long min = Long.parseLong(tags.group(1));
-                    long sec = Long.parseLong(tags.group(2));
-                    String frac = tags.group(3);
-                    long ms = 0;
-                    if (frac != null) {
-                        // LRC fractions are decimal: "5" = .5s, "50" = .50s,
-                        // "500" = .500s. Scale by fractional digit count.
-                        ms = Long.parseLong(frac);
-                        for (int i = frac.length(); i < 3; i++) ms *= 10;
-                    }
-                    stamps.add(min * 60000L + sec * 1000L + ms + offsetMs);
-                    end = tags.end();
-                }
-                if (stamps.isEmpty()) continue;
-
-                String text = line.substring(end).trim();
-                for (long t : stamps) {
-                    lines.add(new Line(Math.max(0, t), text));
+                for (int i = 0; i < spans.size(); i++) {
+                    int[] cur = spans.get(i);
+                    int textStart = cur[2];
+                    int textEnd = (i + 1 < spans.size()) ? spans.get(i + 1)[1] : line.length();
+                    String text = textEnd > textStart
+                            ? line.substring(textStart, textEnd).trim() : "";
+                    lines.add(new Line(Math.max(0, cur[0]), text));
                 }
             }
         } catch (IOException ignored) {
