@@ -18,13 +18,20 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      # ubuntu-latest ships with Android SDK preinstalled and licenses accepted.
+      # ubuntu-latest ships with Android SDK (incl. platform 34) preinstalled.
       # Do NOT use android-actions/setup-android@v3: it calls the removed
-      # `sdkmanager tools` package and fails with exit code 1.
-      - name: Install Android platform + build tools
+      # `sdkmanager tools` package and fails. sdkmanager is NOT on PATH, so
+      # locate it under $ANDROID_HOME and treat install as best-effort.
+      - name: Ensure Android platform + build tools
         run: |
-          yes | sdkmanager --licenses > /dev/null 2>&1 || true
-          sdkmanager "platforms;android-34" "build-tools;34.0.0"
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          SDKMGR=$(find "$ANDROID_HOME/cmdline-tools" -name sdkmanager -type f 2>/dev/null | sort | tail -1)
+          echo "sdkmanager=$SDKMGR"
+          if [ -n "$SDKMGR" ]; then
+            yes | "$SDKMGR" --licenses > /dev/null 2>&1 || true
+            "$SDKMGR" "platforms;android-34" "build-tools;34.0.0" || true
+          fi
+          ls "$ANDROID_HOME/platforms"
 
       - name: Make Gradle wrapper executable
         run: chmod +x ./gradlew
