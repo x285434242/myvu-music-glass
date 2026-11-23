@@ -66,6 +66,9 @@ public final class MusicLyricsFeature implements GlassesFeature {
         }
     };
     private int lastLine = -2;
+    /** Unique per-session title used as the teleprompter fileKey, so switching
+     *  songs never reuses a stale key (which would keep old lyrics on the lens). */
+    private String promptTitle = "Lyrics";
 
     @Override public String id() { return "music-lyrics"; }
     @Override public String label() { return "Music + lyrics"; }
@@ -265,8 +268,17 @@ public final class MusicLyricsFeature implements GlassesFeature {
             if (!player.isPlaying()) {
                 player.start();
                 if (renderer != null && track != null && !track.isEmpty()) {
-                    renderer.open(Lrc.toTeleprompterText(track),
-                            track.title == null ? "Lyrics" : track.title);
+                    // Re-base the lyric timeline so the first line shows at 0s,
+                    // which is where a 30-second preview starts (the preview
+                    // omits any instrumental intro). Without this, songs whose
+                    // lyrics only begin at e.g. 0:29 would look "frozen".
+                    Lrc.Track playback = Lrc.rebaseToFirstLine(track);
+                    track = playback;
+
+                    // Unique key per play so the lens never shows stale lyrics
+                    // from the previous song (same title would reuse the key).
+                    promptTitle = "lyrics-" + System.currentTimeMillis();
+                    renderer.open(Lrc.toTeleprompterText(playback), promptTitle);
                     lastLine = -2;
                 }
                 startTicker();
@@ -305,7 +317,7 @@ public final class MusicLyricsFeature implements GlassesFeature {
                 final int line = idx;
                 String lyricText = track.lines.get(line).text;
                 txtNowPlaying.setText(lyricText);
-                renderer.highlight(line);
+                renderer.highlight(line, promptTitle);
             }
         } catch (IllegalStateException ignored) {
             // player released mid-tick

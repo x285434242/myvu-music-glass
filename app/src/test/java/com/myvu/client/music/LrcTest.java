@@ -43,4 +43,25 @@ public class LrcTest {
         Lrc.Track t = Lrc.parse("[00:01.00]hello\n[00:02.00]world\n");
         assertEquals("hello\nworld", Lrc.toTeleprompterText(t));
     }
+
+    @Test
+    public void rebaseToFirstLineShiftsTimeline() {
+        // Simulates a song with an instrumental intro: first lyric at 0:29.
+        Lrc.Track t = Lrc.parse("[00:29.36]first\n[00:32.77]second\n[00:36.15]third\n");
+        Lrc.Track r = Lrc.rebaseToFirstLine(t);
+        assertEquals(0L, r.lines.get(0).timeMs);
+        assertEquals("first", r.lines.get(0).text);
+        // 32.77 - 29.36 = 3.41s
+        assertEquals(3410L, r.lines.get(1).timeMs);
+        assertEquals("second", r.lines.get(1).text);
+    }
+
+    @Test
+    public void rebaseSkipsEmptyIntroLines() {
+        // Empty-text lines before the first real lyric must not anchor the shift.
+        Lrc.Track t = Lrc.parse("[00:05.00]\n[00:10.00]first real line\n");
+        Lrc.Track r = Lrc.rebaseToFirstLine(t);
+        assertEquals(0L, r.lines.get(1).timeMs);
+        assertEquals("first real line", r.lines.get(1).text);
+    }
 }

@@ -139,6 +139,30 @@ public final class Lrc {
         return new Track(lines, title, artist);
     }
 
+    /**
+     * Return a copy of {@code track} whose timeline is re-based so the first
+     * line with non-empty text starts at 0 ms. This makes a 30-second preview
+     * clip (which usually sits mid-song, after an instrumental intro) line up
+     * with a full-song lyric track whose first line may not appear until
+     * e.g. 0:29.
+     */
+    public static Track rebaseToFirstLine(Track track) {
+        if (track == null || track.isEmpty()) return track;
+        long firstText = -1;
+        for (Line l : track.lines) {
+            if (l.text != null && !l.text.trim().isEmpty()) {
+                firstText = l.timeMs;
+                break;
+            }
+        }
+        if (firstText < 0) return track; // no non-empty line, nothing to shift
+        List<Line> shifted = new ArrayList<>(track.lines.size());
+        for (Line l : track.lines) {
+            shifted.add(new Line(Math.max(0, l.timeMs - firstText), l.text));
+        }
+        return new Track(shifted, track.title, track.artist);
+    }
+
     /** Join lyric texts into one teleprompter document, one line per paragraph. */
     public static String toTeleprompterText(Track track) {
         if (track == null || track.isEmpty()) return "";

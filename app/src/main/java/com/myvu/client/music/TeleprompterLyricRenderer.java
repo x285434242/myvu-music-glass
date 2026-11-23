@@ -33,9 +33,10 @@ public final class TeleprompterLyricRenderer implements LyricRenderer {
     }
 
     @Override
-    public void highlight(int lineIndex) {
+    public void highlight(int lineIndex, String title) {
         if (connection == null || !opened) return;
-        connection.teleprompterHighlight(lineIndex, title);
+        String t = (title == null || title.isEmpty()) ? this.title : title;
+        connection.teleprompterHighlight(lineIndex, t);
     }
 
     @Override

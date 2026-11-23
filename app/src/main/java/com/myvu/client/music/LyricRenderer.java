@@ -10,7 +10,7 @@ public interface LyricRenderer {
     void open(String fullText, String title);
 
     /** Highlight the current line (0-based paragraph index). */
-    void highlight(int lineIndex);
+    void highlight(int lineIndex, String title);
 
     /** Clear / end display. */
     void close();
